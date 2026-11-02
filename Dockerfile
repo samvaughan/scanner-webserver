@@ -23,7 +23,7 @@ COPY templates/ templates/
 RUN useradd --create-home --uid 1000 scanappuser \
     && mkdir /scans \
     && chown scanappuser /scans
-USER scanner
+USER scanappuser
 ENV SCAN_DIR=/scans
 VOLUME /scans
 EXPOSE 5000
