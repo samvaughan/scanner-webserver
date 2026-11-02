@@ -1,0 +1,10 @@
+[project]
+name = "scanwebserver"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "flask>=3.1.3",
+    "pypdf>=6.21.4",
+]

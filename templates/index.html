@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scanner</title>
+<style>
+:root{--bg:#eef1f3;--panel:#fff;--ink:#1b2430;--muted:#5d6b7a;--line:#d3dae0;--accent:#0b6e75;--accent-ink:#fff;--err:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#12171c;--panel:#1b222a;--ink:#e6ebf0;--muted:#93a1b0;--line:#2d3742;--accent:#3fb6bd;--accent-ink:#06282b;--err:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,sans-serif;display:flex;justify-content:center;padding:24px 16px}
+main{width:100%;max-width:560px}
+h1{font-size:1.5rem;margin:0 0 16px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+label{display:block;font-size:.9rem;color:var(--muted);margin-bottom:4px}
+select{width:100%;padding:9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.full{grid-column:1/-1}
+.row{display:flex;gap:8px}
+button{font:inherit;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink);padding:9px 12px;cursor:pointer}
+button:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+#scan{width:100%;margin-top:18px;padding:18px;font-size:1.25rem;font-weight:600;background:var(--accent);color:var(--accent-ink);border:0}
+#scan:disabled{opacity:.6;cursor:progress}
+#status{margin:12px 0 0;min-height:1.5em}
+#status.err{color:var(--err)}
+pre{margin:12px 0 0;max-height:180px;overflow:auto;background:var(--bg);padding:10px;border-radius:6px;font-size:.8rem;white-space:pre-wrap}
+ul{list-style:none;margin:0;padding:0}
+li{padding:6px 0;border-top:1px solid var(--line)}
+li:first-child{border-top:0}
+a{color:var(--accent)}
+h2{font-size:1rem;margin:0 0 8px}
+</style></head><body><main>
+<h1>Scanner</h1>
+<section>
+  <div class="grid">
+    <div class="full"><label for="device">Scanner</label>
+      <div class="row"><select id="device"><option>{{ default_device }}</option></select>
+      <button id="refresh" type="button">Refresh</button></div></div>
+    <div><label for="resolution">Resolution</label>
+      <select id="resolution"><option>200</option><option selected>300</option><option>400</option><option>600</option></select></div>
+    <div><label for="mode">Colour</label>
+      <select id="mode"><option value="Color">Colour</option><option value="Gray">Greyscale</option></select></div>
+    <div><label for="paper">Paper size</label>
+      <select id="paper"><option value="auto">Automatic</option><option value="a4">A4</option><option value="letter">US Letter</option><option value="legal">US Legal</option></select></div>
+    <div><label for="output">Save as</label>
+      <select id="output"><option value="pdf">One PDF</option><option value="pdfpages">PDF per page</option><option value="png">PNG per page</option></select></div>
+  </div>
+  <button id="scan" type="button">Scan</button>
+  <p id="status" role="status"></p>
+  <pre id="log" hidden></pre>
+</section>
+<section><h2>Recent scans</h2><ul id="recent"><li>None yet.</li></ul></section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let timer = null;
+async function j(url, opts) { const r = await fetch(url, opts); return {ok: r.ok, data: await r.json()}; }
+
+async function loadDevices() {
+  const {data} = await j('/api/devices');
+  if (!data.length) { $('status').textContent = 'No scanners found. Is it awake and on the network?'; $('status').className = 'err'; return; }
+  const cur = $('device').value;
+  $('device').innerHTML = '';
+  data.forEach(d => { const o = document.createElement('option'); o.textContent = d; $('device').append(o); });
+  if (data.includes(cur)) $('device').value = cur;
+  else { const air = data.find(d => d.startsWith('airscan:')); if (air) $('device').value = air; }
+  $('status').textContent = ''; $('status').className = '';
+}
+
+async function loadRecent() {
+  const {data} = await j('/api/recent');
+  $('recent').innerHTML = data.length ? '' : '<li>None yet.</li>';
+  data.forEach(n => { const li = document.createElement('li'); const a = document.createElement('a');
+    a.href = '/files/' + encodeURIComponent(n); a.textContent = n; li.append(a); $('recent').append(li); });
+}
+
+async function poll() {
+  const {data} = await j('/api/status');
+  $('log').hidden = !data.log; $('log').textContent = data.log; $('log').scrollTop = 1e9;
+  if (data.running) { $('status').textContent = 'Scanning…'; $('status').className = ''; return; }
+  clearInterval(timer); timer = null; $('scan').disabled = false;
+  if (data.error) { $('status').textContent = data.error; $('status').className = 'err'; }
+  else { $('status').textContent = 'Done. Saved ' + data.files.length + ' file(s).'; $('status').className = ''; }
+  loadRecent();
+}
+
+$('scan').onclick = async () => {
+  $('scan').disabled = true; $('status').textContent = 'Starting…'; $('status').className = '';
+  const body = {device: $('device').value, resolution: $('resolution').value, mode: $('mode').value,
+                paper: $('paper').value, output: $('output').value};
+  const {ok, data} = await j('/api/scan', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  if (!ok) { $('status').textContent = data.error; $('status').className = 'err'; $('scan').disabled = false; return; }
+  timer = setInterval(poll, 1000);
+};
+$('refresh').onclick = loadDevices;
+loadDevices(); loadRecent();
+</script></body></html>

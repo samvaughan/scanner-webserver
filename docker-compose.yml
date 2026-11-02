@@ -1,0 +1,10 @@
+services:
+  scan-app:
+    build: .
+    container_name: scan-app
+    network_mode: host
+    env_file:
+      .env
+    volumes:
+      - /portainer/Files/AppData/Config/ScanApp/scans:/scans
+    restart: unless-stopped
