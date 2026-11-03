@@ -36,7 +36,7 @@ def list_devices() -> list[str]:
             capture_output=True,
             text=True,
             timeout=30,
-            check=True,
+            check=False,
         ).stdout
     except OSError, subprocess.TimeoutExpired:
         out = ""
@@ -52,7 +52,7 @@ def scanimage_supports_pdf() -> bool:
             capture_output=True,
             text=True,
             timeout=30,
-            check=True,
+            check=False,
         ).stdout
     except OSError, subprocess.TimeoutExpired:
         return False
@@ -79,7 +79,7 @@ def merge_pdfs(pages, dest) -> bool:
         log(f"pypdf merge failed: {exc}\n")
     if shutil.which("pdfunite"):
         return (
-            subprocess.run(["pdfunite", *pages, str(dest)], check=True).returncode == 0
+            subprocess.run(["pdfunite", *pages, str(dest)], check=False).returncode == 0
         )
     return False
 
