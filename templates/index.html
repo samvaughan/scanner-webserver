@@ -38,12 +38,18 @@ h2{font-size:1rem;margin:0 0 8px}
       <select id="resolution"><option>200</option><option selected>300</option><option>400</option><option>600</option></select></div>
     <div><label for="mode">Colour</label>
       <select id="mode"><option value="Color">Colour</option><option value="Gray">Greyscale</option></select></div>
+    <div class="full"><label for="source">Feeding</label>
+      <select id="source"><option value="adf">Stack in feeder (one scan)</option><option value="single">One sheet at a time (merge at the end)</option></select></div>
     <div><label for="paper">Paper size</label>
       <select id="paper"><option value="auto">Automatic</option><option value="a4">A4</option><option value="letter">US Letter</option><option value="legal">US Legal</option></select></div>
     <div><label for="output">Save as</label>
       <select id="output"><option value="pdf">One PDF</option><option value="pdfpages">PDF per page</option><option value="png">PNG per page</option></select></div>
   </div>
   <button id="scan" type="button">Scan</button>
+  <div class="row" style="margin-top:10px">
+    <button id="finish" type="button" hidden style="flex:1">Finish</button>
+    <button id="discard" type="button" hidden>Discard</button>
+  </div>
   <p id="status" role="status"></p>
   <pre id="log" hidden></pre>
 </section>
@@ -72,13 +78,23 @@ async function loadRecent() {
     a.href = '/files/' + encodeURIComponent(n); a.textContent = n; li.append(a); $('recent').append(li); });
 }
 
+function updateUI(pages) {
+  const single = $('source').value === 'single';
+  $('scan').textContent = single ? (pages ? 'Scan next page' : 'Scan page') : 'Scan';
+  $('finish').hidden = $('discard').hidden = !pages;
+  $('finish').textContent = 'Finish (' + pages + ' page' + (pages == 1 ? '' : 's') + ')';
+  $('source').disabled = $('output').disabled = pages > 0;
+}
+
 async function poll() {
   const {data} = await j('/api/status');
   $('log').hidden = !data.log; $('log').textContent = data.log; $('log').scrollTop = 1e9;
   if (data.running) { $('status').textContent = 'Scanning…'; $('status').className = ''; return; }
   clearInterval(timer); timer = null; $('scan').disabled = false;
   if (data.error) { $('status').textContent = data.error; $('status').className = 'err'; }
-  else { $('status').textContent = 'Done. Saved ' + data.files.length + ' file(s).'; $('status').className = ''; }
+  else if (data.files.length) { $('status').textContent = 'Done. Saved ' + data.files.length + ' file(s).'; $('status').className = ''; }
+  else { $('status').textContent = 'Page ' + data.pages + ' scanned. Load the next sheet, then scan again or press Finish.'; $('status').className = ''; }
+  updateUI(data.pages);
   loadRecent();
 }
 
@@ -86,10 +102,24 @@ $('scan').onclick = async () => {
   $('scan').disabled = true; $('status').textContent = 'Starting…'; $('status').className = '';
   const body = {device: $('device').value, resolution: $('resolution').value, mode: $('mode').value,
                 paper: $('paper').value, output: $('output').value};
-  const {ok, data} = await j('/api/scan', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const url = $('source').value === 'single' ? '/api/scan_page' : '/api/scan';
+  const {ok, data} = await j(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
   if (!ok) { $('status').textContent = data.error; $('status').className = 'err'; $('scan').disabled = false; return; }
   timer = setInterval(poll, 1000);
 };
 $('refresh').onclick = loadDevices;
+$('source').onchange = () => updateUI(0);
+$('finish').onclick = async () => {
+  const {ok, data} = await j('/api/finish', {method: 'POST'});
+  $('status').textContent = ok ? 'Done. Saved ' + data.files.length + ' file(s).' : data.error;
+  $('status').className = ok ? '' : 'err';
+  if (ok) updateUI(0); loadRecent();
+};
+$('discard').onclick = async () => {
+  const {ok, data} = await j('/api/discard', {method: 'POST'});
+  $('status').textContent = ok ? 'Discarded.' : data.error; $('status').className = ok ? '' : 'err';
+  if (ok) updateUI(0);
+};
+j('/api/status').then(({data}) => { if (data.pages) $('source').value = 'single'; updateUI(data.pages); });
 loadDevices(); loadRecent();
 </script></body></html>

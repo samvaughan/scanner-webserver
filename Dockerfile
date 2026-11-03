@@ -24,7 +24,6 @@ RUN useradd --create-home --uid 1000 scanappuser \
     && mkdir /scans \
     && chown scanappuser /scans
 USER scanappuser
-ENV SCAN_DIR=/scans
 VOLUME /scans
 EXPOSE 5000
 

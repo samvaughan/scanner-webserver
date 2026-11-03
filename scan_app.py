@@ -19,11 +19,14 @@ PAPER_HEIGHT_MM = {"auto": None, "a4": 297, "letter": 279.4, "legal": 355.6}
 RESOLUTIONS = {"200", "300", "400", "600"}
 MODES = {"Color", "Gray"}
 OUTPUTS = {"pdf", "pdfpages", "png"}
+SOURCE = "ADF Front"  # exact name reported by this scanner
 
 app = Flask(__name__)
 lock = threading.Lock()
 state = {"running": False, "log": "", "files": [], "error": None}
 known_devices = []
+# Pages scanned one at a time, waiting to be merged by /api/finish
+session = {"stamp": None, "fmt": None, "output": None, "pages": []}
 
 
 def list_devices() -> list[str]:
@@ -108,7 +111,7 @@ def build_command(
         "-d",
         device,
         "--source",
-        "ADF",
+        SOURCE,
         "--mode",
         mode,
         "--resolution",
@@ -185,6 +188,60 @@ def run_scan(device: str, resolution: str, mode: str, paper: str, output: str) -
             state["running"] = False
 
 
+def run_page_scan(
+    device: str, resolution: str, mode: str, paper: str, output: str
+) -> None:
+    """Scan one sheet and add it to the current session."""
+    try:
+        fmt = choose_format(output)  # calls log(), so must run outside the lock
+        with lock:
+            if session["stamp"] is None:
+                session.update(
+                    stamp=datetime.now().strftime("%F_%H%M%S"),
+                    fmt=fmt,
+                    output=output,
+                    pages=[],
+                )
+            stamp, fmt = session["stamp"], session["fmt"]
+            n = len(session["pages"]) + 1
+        SCAN_DIR.mkdir(parents=True, exist_ok=True)
+        dest = SCAN_DIR / f"scan_{stamp}_{n:03d}.{fmt}"
+
+        cmd = [
+            "scanimage",
+            "-d",
+            device,
+            "--source",
+            SOURCE,
+            "--mode",
+            mode,
+            "--resolution",
+            resolution,
+            "--format",
+            fmt,
+        ]
+        if PAPER_HEIGHT_MM[paper]:
+            cmd += ["-y", str(PAPER_HEIGHT_MM[paper])]
+        log("$ " + " ".join(cmd) + f" > {dest.name}\n")
+
+        with open(dest, "wb") as fh:
+            proc = subprocess.run(cmd, stdout=fh, stderr=subprocess.PIPE, check=False)
+        log(proc.stderr.decode(errors="replace"))
+        if proc.returncode != 0 or dest.stat().st_size == 0:
+            dest.unlink(missing_ok=True)
+            raise RuntimeError(
+                "The page didn't scan. Check a sheet is loaded and the scanner is awake."
+            )
+        with lock:
+            session["pages"].append(str(dest))
+    except Exception as exc:  # noqa: BLE001
+        with lock:
+            state["error"] = str(exc)
+    finally:
+        with lock:
+            state["running"] = False
+
+
 @app.get("/")
 def index():
     return render_template("index.html", default_device=DEFAULT_DEVICE)
@@ -195,8 +252,8 @@ def api_devices():
     return jsonify(list_devices())
 
 
-@app.post("/api/scan")
-def api_scan():
+def start_job(target):
+    """Validate the request and run `target` in a background thread."""
     data = request.get_json(force=True, silent=True) or {}
     device = data.get("device", DEFAULT_DEVICE)
     resolution = str(data.get("resolution", "300"))
@@ -215,17 +272,53 @@ def api_scan():
     with lock:
         if state["running"]:
             return jsonify(error="A scan is already running."), 409
+        if target is run_scan and session["pages"]:
+            return jsonify(error="Finish or discard the page-by-page scan first."), 409
         state.update(running=True, log="", files=[], error=None)
     threading.Thread(
-        target=run_scan, args=(device, resolution, mode, paper, output), daemon=True
+        target=target, args=(device, resolution, mode, paper, output), daemon=True
     ).start()
+    return jsonify(ok=True)
+
+
+@app.post("/api/scan")
+def api_scan():
+    return start_job(run_scan)
+
+
+@app.post("/api/scan_page")
+def api_scan_page():
+    return start_job(run_page_scan)
+
+
+@app.post("/api/finish")
+def api_finish():
+    with lock:
+        if state["running"]:
+            return jsonify(error="A scan is still running."), 409
+        if not session["pages"]:
+            return jsonify(error="No pages scanned yet."), 400
+        pages = [Path(p) for p in session["pages"]]
+        stamp, fmt, output = session["stamp"], session["fmt"], session["output"]
+        session.update(stamp=None, fmt=None, output=None, pages=[])
+    return jsonify(files=finalise(pages, output, fmt, stamp))
+
+
+@app.post("/api/discard")
+def api_discard():
+    with lock:
+        if state["running"]:
+            return jsonify(error="A scan is still running."), 409
+        for p in session["pages"]:
+            Path(p).unlink(missing_ok=True)
+        session.update(stamp=None, fmt=None, output=None, pages=[])
     return jsonify(ok=True)
 
 
 @app.get("/api/status")
 def api_status():
     with lock:
-        return jsonify(state)
+        return jsonify({**state, "pages": len(session["pages"])})
 
 
 @app.get("/api/recent")
