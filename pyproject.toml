@@ -9,3 +9,19 @@ dependencies = [
     "gunicorn>=26.2.0",
     "pypdf>=6.21.4",
 ]
+
+
+[dependency-groups]
+dev = ["ty", "pre-commit"]
+
+[tool.isort]
+profile = "black"
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "UP"]
+
+[tool.ty.environment]
+python-version = "3.14"
