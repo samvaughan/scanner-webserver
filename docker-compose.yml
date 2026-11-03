@@ -4,7 +4,8 @@ services:
     container_name: scan-app
     network_mode: host
     env_file:
-      stack.env
+      - path: stack.env
+        required: false
     volumes:
-      - /home/sam/Documents/HomeLab/ScanWebServer/test_scans:/scans
+      - /portainer/Files/AppData/Config/ScanApp/scans:/scans
     restart: unless-stopped
