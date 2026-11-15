@@ -7,5 +7,5 @@ services:
       - path: stack.env
         required: false
     volumes:
-      - /portainer/Files/AppData/Config/ScanApp/scans:/scans
+      - /mnt/harddrive/scans/:/scans
     restart: unless-stopped
