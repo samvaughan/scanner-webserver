@@ -6,6 +6,9 @@ services:
     env_file:
       - path: stack.env
         required: false
+    environment:
+      CONSUME_DIR: /consume
     volumes:
       - /mnt/harddrive/scans/:/scans
+      - /mnt/harddrive/paperless/consume:/consume
     restart: unless-stopped
