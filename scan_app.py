@@ -1,6 +1,7 @@
 """Tiny Flask front-end for scanimage (SANE).
 
 Scans are saved to ~/Scans (change SCAN_DIR below).
+If CONSUME_DIR is set, each finished merged PDF is also copied there for Paperless.
 """
 
 import argparse
@@ -15,6 +16,8 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
 SCAN_DIR = Path(os.getenv("SCAN_DIR", "/scans"))
+# Optional: where to copy each finished merged PDF for Paperless. Unset = no copy.
+CONSUME_DIR = Path(p) if (p := os.getenv("CONSUME_DIR")) else None
 DEFAULT_DEVICE = os.getenv("DEFAULT_DEVICE")
 PAPER_HEIGHT_MM = {"auto": None, "a4": 297, "letter": 279.4, "legal": 355.6}
 RESOLUTIONS = {"200", "300", "400", "600"}
@@ -161,6 +164,25 @@ def stream_command(cmd: list[str]) -> None:
             log(line)
 
 
+def send_to_paperless(pdf: Path) -> None:
+    """Copy a finished PDF into Paperless's consume folder.
+
+    Writes to a hidden temp name first, then renames, so Paperless (which
+    ignores dotfiles) never sees a half-copied file. A failure here is logged
+    but never fails the scan: the original is already safe in SCAN_DIR.
+    """
+    if CONSUME_DIR is None:
+        return
+    tmp = CONSUME_DIR / f".{pdf.name}.tmp"
+    try:
+        shutil.copyfile(pdf, tmp)
+        os.replace(tmp, CONSUME_DIR / pdf.name)
+        log(f"Copied {pdf.name} to Paperless\n")
+    except OSError as exc:
+        tmp.unlink(missing_ok=True)
+        log(f"Couldn't copy {pdf.name} to Paperless: {exc}\n")
+
+
 def finalise(pages: list[Path], output: str, fmt: str, stamp: str) -> list[str]:
     """Merge per-page PDFs if one PDF was requested. Returns the final file names."""
     if output != "pdf" or fmt != "pdf":
@@ -171,6 +193,7 @@ def finalise(pages: list[Path], output: str, fmt: str, stamp: str) -> list[str]:
         for p in pages:
             p.unlink()
         log(f"Merged {len(pages)} page(s) into {merged.name}\n")
+        send_to_paperless(merged)
         return [merged.name]
 
     log(
